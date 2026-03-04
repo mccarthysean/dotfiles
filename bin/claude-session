@@ -5,6 +5,7 @@
 #   claude-session              # Interactive menu: list sessions or create new
 #   claude-session <name>       # Attach/create session in current directory
 #   claude-session --list       # List all Claude sessions
+#   claude-session --ports      # Show DevPod SSH port allocation table
 #   claude-session --help       # Show this help
 #
 # New sessions start in $PWD (cd to your project first, then run claude-session).
@@ -24,7 +25,29 @@ validate_session_name() {
 }
 
 show_help() {
-    sed -n '2,15s/^# //p' "$0"
+    sed -n '2,16s/^# //p' "$0"
+    echo ""
+    show_ports
+}
+
+show_ports() {
+    echo "DevPod SSH Ports (from host: claude-session -c PORT)"
+    echo "──────────────────────────────────────────────────────"
+    printf "  %-24s %s\n" "REPO" "PORT"
+    echo "  ────────────────────── ────"
+    printf "  %-24s %s\n" \
+        "rcom" "2222" \
+        "wibble" "2223" \
+        "spartans-hockey" "2224" \
+        "myijack-api" "2225" \
+        "timescale_db" "2226" \
+        "postgresql_scheduler" "2228" \
+        "alerts" "2229" \
+        "mqtt_jobs" "2230" \
+        "mqtt_listener" "2231" \
+        "traefik_ijack" "2232" \
+        "monitoring" "2233"
+    echo "──────────────────────────────────────────────────────"
 }
 
 list_sessions() {
@@ -153,6 +176,10 @@ case "${1:-}" in
         ;;
     --list|-l)
         list_sessions
+        exit 0
+        ;;
+    --ports|-p)
+        show_ports
         exit 0
         ;;
     "")
