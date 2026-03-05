@@ -13,7 +13,8 @@ development via Termius + Tailscale.
 | **tmux** | Persistent terminal sessions that survive disconnects |
 | **Claude Code CLI** | AI-powered coding assistant |
 | **claudes** | tmux session manager (auto-launches on login) |
-| **.tmux.conf** | Container-optimized tmux config (OSC 52 clipboard, status bar at top) |
+| **.tmux.conf** | Container-optimized tmux config (OSC 52 clipboard, right-click paste, status bar at top) |
+| **.bashrc** | Shell config (history, aliases, auto-venv, sources .bashrc.d/) |
 | **.bashrc.d/** | Bash snippets (PATH, auto-launch claudes) |
 
 ## Architecture
@@ -51,8 +52,13 @@ devpod up ~/git_wsl/alerts --ide vscode
 cd ~/git_wsl/rcom && claudes    # Auto-detects rcom workspace
 claudes alerts                  # Connect to alerts workspace
 claudes rcom frontend           # Connect to rcom-frontend session
+claudes frontend                # From rcom dir → auto-creates rcom-frontend
 claudes --list                  # List all workspaces + status
 ```
+
+Running `claudes` twice from the same workspace auto-creates numbered sessions
+(`rcom`, `rcom-2`, `rcom-3`, etc.) when the previous session already has a client attached.
+Detached sessions re-attach normally.
 
 ### Manage workspaces
 
@@ -71,7 +77,7 @@ devpod delete alerts                           # Remove entirely
 | New window | `Ctrl+b`, `c` |
 | Switch window | `Ctrl+b`, `0-9` |
 | Copy mode | `Ctrl+b`, `[` |
-| Paste | `Ctrl+b`, `]` |
+| Paste | `Ctrl+b`, `]` or right-click |
 
 ## Configuration
 
@@ -79,16 +85,31 @@ devpod delete alerts                           # Remove entirely
 
 ```bash
 devpod provider set-options docker DOTFILES_URL=https://github.com/mccarthysean/dotfiles
+devpod context set-options -o DOTFILES_SCRIPT=install.sh
 ```
+
+### Persistent Claude Code authentication (one-time)
+
+Generate a long-lived OAuth token so containers don't require browser auth on every rebuild:
+
+```bash
+claude setup-token          # Follow prompts, save token to ~/.claude/.setup-token
+chmod 600 ~/.claude/.setup-token
+```
+
+The host-side `claudes` reads this token and passes it via `CLAUDE_CODE_OAUTH_TOKEN` env var
+through SSH, so containers authenticate automatically.
 
 ## Files
 
 ```
 dotfiles/
 ├── install.sh          # Main installer (runs in every new container)
-├── .tmux.conf          # tmux config (OSC 52, xterm-256color, status top)
+├── .bashrc             # Shell config (history, aliases, auto-venv, sources .bashrc.d/)
+├── .tmux.conf          # tmux config (OSC 52, right-click paste, status top)
 ├── bin/
-│   ├── claudes         # tmux session manager script
+│   ├── claudes         # Container-side tmux session manager
+│   ├── claudes-host    # Host-side (WSL) orchestrator — backup copy
 │   └── claude-session  # symlink → claudes (backwards compat)
 └── .bashrc.d/
     └── *.sh            # Bash snippets (PATH, auto-launch on login)
