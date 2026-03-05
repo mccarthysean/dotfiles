@@ -65,7 +65,7 @@ attach_or_create() {
         if tmux has-session -t "$session" 2>/dev/null; then
             exec tmux switch-client -t "$session"
         else
-            tmux new-session -d -s "$session" -c "$workdir" "claude"
+            tmux new-session -d -s "$session" -c "$workdir" "claude; exec bash"
             exec tmux switch-client -t "$session"
         fi
     fi
@@ -74,7 +74,7 @@ attach_or_create() {
         exec tmux attach-session -t "$session"
     else
         echo "Creating new session: $session ($workdir)"
-        exec tmux new-session -s "$session" -c "$workdir" "claude"
+        exec tmux new-session -s "$session" -c "$workdir" "claude; exec bash"
     fi
 }
 
