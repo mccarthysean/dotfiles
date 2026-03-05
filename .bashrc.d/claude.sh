@@ -3,8 +3,9 @@
 # Ensure local bin is in PATH
 export PATH="$HOME/.local/bin:$PATH"
 
-# Auto-launch claude-session on SSH login (not already in tmux, not in VS Code)
-if [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ] && [ -z "$VSCODE_INJECTION" ]; then
+# Auto-launch claude-session on interactive login (not already in tmux, not in VS Code)
+# DevPod SSH tunnels don't set $SSH_CONNECTION, so we check for interactive shell instead
+if [ -z "$TMUX" ] && [ -z "$VSCODE_INJECTION" ] && [[ $- == *i* ]]; then
     if command -v claude-session &>/dev/null; then
         claude-session
     fi

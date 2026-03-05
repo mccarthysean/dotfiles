@@ -1,7 +1,7 @@
 # DevPod Dotfiles
 
 Shared dotfiles injected into every [DevPod](https://devpod.sh) container via `DOTFILES_URL`.
-Provides SSH access, tmux, Claude Code CLI, and the `claude-session` script for phone-based
+Provides tmux, Claude Code CLI, and the `claude-session` script for phone-based
 development via Termius + Tailscale.
 
 ## What Gets Installed
@@ -11,43 +11,21 @@ development via Termius + Tailscale.
 | Component | Purpose |
 |-----------|---------|
 | **tmux** | Persistent terminal sessions that survive disconnects |
-| **openssh-server** | SSH into containers from phone or host |
 | **Claude Code CLI** | AI-powered coding assistant |
-| **claude-session** | tmux session manager (auto-launches on SSH login) |
+| **claude-session** | tmux session manager (auto-launches on login) |
 | **.tmux.conf** | Container-optimized tmux config (OSC 52 clipboard, status bar at top) |
-| **.bashrc.d/** | Bash snippets (PATH, auto-launch claude-session on SSH) |
-
-## SSH Port Allocation
-
-Each repo gets a unique SSH port so multiple workspaces can run simultaneously:
-
-| Repo | SSH Port | Stack |
-|------|----------|-------|
-| rcom | 2222 | Flask + FastAPI + React |
-| wibble | 2223 | FastAPI + React 19 |
-| spartans-hockey | 2224 | FastAPI + React |
-| myijack-api | 2225 | FastAPI |
-| timescale_db | 2226 | Python + TimescaleDB |
-| gateway_can_to_mqtt | — | `network_mode: host` (port mapping N/A) |
-| postgresql_scheduler | 2228 | Python + PostgreSQL |
-| alerts | 2229 | Python + Alerting |
-| mqtt_jobs | 2230 | Python + MQTT |
-| mqtt_listener | 2231 | Python + MQTT |
-| traefik_ijack | 2232 | Traefik |
-| monitoring | 2233 | Grafana + Loki |
-
-Port mappings are configured per-repo in `docker-compose.dev.yml` as `"XXXX:22"`.
+| **.bashrc.d/** | Bash snippets (PATH, auto-launch claude-session) |
 
 ## Architecture
 
 ```
-Phone (Termius) → Tailscale VPN → WSL2 (100.109.194.122:XXXX)
-  → Docker port mapping → Container sshd (port 22)
-  → .bashrc auto-launches claude-session → tmux → Claude Code
+Phone (Termius) → Tailscale VPN → WSL2 (100.109.194.122:22)
+  → claude-session -c WORKSPACE → ssh WORKSPACE.devpod (DevPod tunnel)
+  → Container auto-launches claude-session → tmux → Claude Code
 ```
 
-DevPod's dotfiles injection clones this repo and runs `install.sh` inside every new container,
-so SSH + tmux + Claude Code work without modifying any project Dockerfile.
+DevPod provides built-in SSH tunneling via `ProxyCommand` entries in `~/.ssh/config`.
+No SSH ports or openssh-server needed inside containers.
 
 ## Usage
 
@@ -55,37 +33,33 @@ so SSH + tmux + Claude Code work without modifying any project Dockerfile.
 
 ```bash
 # From WSL — DevPod auto-discovers .devcontainer/devcontainer.json
-devpod up ~/git_wsl/wibble --ide none
+devpod up ~/git_wsl/alerts --ide none
 
 # Or with VS Code:
-devpod up ~/git_wsl/wibble --ide vscode
+devpod up ~/git_wsl/alerts --ide vscode
 ```
 
 ### Connect from phone (Termius + Tailscale)
 
-| Setting | Value |
-|---------|-------|
-| Host | `100.109.194.122` |
-| Port | See table above (e.g., 2223 for wibble) |
-| User | `root` |
-| Auth | SSH keys (auto-configured) or password `claude` |
-
-On connect, `.bashrc` auto-launches `claude-session` → tmux → Claude Code.
+1. SSH into WSL2: `100.109.194.122:22` (user: `sean`)
+2. Run `claude-session -c alerts` to tunnel into the DevPod container
+3. Auto-launches tmux → Claude Code
 
 ### Connect from WSL host
 
 ```bash
-claude-session -c 2223    # SSH into wibble container
-claude-session --ports    # Show port allocation table
+ssh alerts.devpod               # Direct DevPod tunnel
+claude-session -c alerts        # Same, via claude-session wrapper
+claude-session --devpod         # List available workspaces
 ```
 
 ### Manage workspaces
 
 ```bash
 devpod list                                    # Show all workspaces
-devpod stop wibble                             # Stop (saves resources)
-devpod up ~/git_wsl/wibble --ide none          # Restart
-devpod delete wibble                           # Remove entirely
+devpod stop alerts                             # Stop (saves resources)
+devpod up ~/git_wsl/alerts --ide none          # Restart
+devpod delete alerts                           # Remove entirely
 ```
 
 ### tmux controls
@@ -106,12 +80,6 @@ devpod delete wibble                           # Remove entirely
 devpod provider set-options docker DOTFILES_URL=https://github.com/mccarthysean/dotfiles
 ```
 
-### SSH authentication
-
-The `~/.ssh` directory is bind-mounted read-only into containers at `/root/.ssh`.
-`install.sh` copies `*.pub` files into `/root/.ssh/authorized_keys` automatically.
-Password fallback: `root:claude`.
-
 ## Files
 
 ```
@@ -121,7 +89,7 @@ dotfiles/
 ├── bin/
 │   └── claude-session  # tmux session manager script
 └── .bashrc.d/
-    └── *.sh            # Bash snippets (PATH, auto-launch on SSH)
+    └── *.sh            # Bash snippets (PATH, auto-launch on login)
 ```
 
 ## Safety

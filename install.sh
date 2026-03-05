@@ -1,6 +1,6 @@
 #!/bin/bash
 # DevPod dotfiles installer — runs inside each new container
-# Installs tmux, SSH server, Claude Code, claude-session, and bash snippets
+# Installs tmux, Claude Code, claude-session, and bash snippets
 # Assumes Debian/Ubuntu-based containers (apt-get)
 
 set -euo pipefail
@@ -14,7 +14,6 @@ echo "Installing dotfiles from $DOTFILES_DIR..."
 # ─── Install required packages if missing (Debian/Ubuntu) ───
 PACKAGES_TO_INSTALL=()
 command -v tmux &>/dev/null || PACKAGES_TO_INSTALL+=(tmux)
-command -v sshd &>/dev/null || PACKAGES_TO_INSTALL+=(openssh-server)
 command -v curl &>/dev/null || PACKAGES_TO_INSTALL+=(curl)
 
 if [ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]; then
@@ -29,36 +28,6 @@ if ! command -v claude &>/dev/null; then
     echo "  Installing Claude Code..."
     curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null
     echo "  ✓ Claude Code installed"
-fi
-
-# ─── SSH server for remote access (phone via Termius + Tailscale) ───
-install_ssh() {
-    $SUDO mkdir -p /run/sshd
-    $SUDO sed -i 's/#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-    $SUDO sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-    echo "root:claude" | $SUDO chpasswd 2>/dev/null
-
-    # Set up authorized_keys from mounted .ssh
-    $SUDO mkdir -p /root/.ssh
-    $SUDO chmod 700 /root/.ssh
-    if [ -d /root/.ssh ]; then
-        for pubkey in /root/.ssh/*.pub; do
-            if [ -f "$pubkey" ]; then
-                $SUDO cat "$pubkey" >> /root/.ssh/authorized_keys
-            fi
-        done
-        [ -f /root/.ssh/authorized_keys ] && $SUDO chmod 600 /root/.ssh/authorized_keys
-    fi
-
-    # Start sshd if not already running
-    if ! pgrep -x sshd >/dev/null 2>&1; then
-        $SUDO /usr/sbin/sshd 2>/dev/null || true
-    fi
-    echo "  ✓ SSH server configured and started"
-}
-
-if [ -f /etc/ssh/sshd_config ]; then
-    install_ssh
 fi
 
 # ─── tmux config (container version — OSC 52 clipboard, no win32yank) ───
