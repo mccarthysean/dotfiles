@@ -3,6 +3,10 @@
 # Ensure local bin is in PATH
 export PATH="$HOME/.local/bin:$PATH"
 
+# ntfy notification endpoint — shared ntfy-claude container on traefik-public Docker network
+# Used by Claude Code hooks (ntfy-permission.sh, ntfy-idle.sh) for phone notifications
+export NTFY_URL="http://ntfy-claude:80"
+
 # Auto-launch claude-session on interactive login (not already in tmux, not in VS Code)
 # DevPod SSH tunnels don't set $SSH_CONNECTION, so we check for interactive shell instead
 if [ -z "$TMUX" ] && [ -z "$VSCODE_INJECTION" ] && [[ $- == *i* ]]; then
