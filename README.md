@@ -79,26 +79,80 @@ devpod delete alerts                           # Remove entirely
 | Copy mode | `Ctrl+b`, `[` |
 | Paste | `Ctrl+b`, `]` or right-click |
 
-## Configuration
+## Installation
 
-### DevPod dotfiles setup (one-time)
+### Prerequisites
+
+- WSL2 (Ubuntu 24.04)
+- [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/) (or Docker Engine in WSL)
+- [DevPod](https://devpod.sh) CLI (`/usr/local/bin/devpod`)
+- [Tailscale](https://tailscale.com) (for phone access)
+- openssh-server in WSL (for phone access via Termius)
+
+### 1. Clone the dotfiles repo
+
+```bash
+git clone https://github.com/mccarthysean/dotfiles.git ~/git_wsl/dotfiles
+```
+
+### 2. Configure DevPod to use dotfiles (one-time)
 
 ```bash
 devpod provider set-options docker DOTFILES_URL=https://github.com/mccarthysean/dotfiles
 devpod context set-options -o DOTFILES_SCRIPT=install.sh
 ```
 
-### Persistent Claude Code authentication (one-time)
+Every new `devpod up` will now clone this repo into the container and run `install.sh`
+automatically — installing tmux, Claude Code, claudes, .bashrc, and .tmux.conf.
+
+### 3. Install the host-side `claudes` script
+
+The host-side script lives on your WSL machine (not inside containers). It handles workspace
+discovery, auto-detection, and SSH tunneling into DevPod containers.
+
+```bash
+mkdir -p ~/.local/bin
+cp ~/git_wsl/dotfiles/bin/claudes-host ~/.local/bin/claudes
+chmod +x ~/.local/bin/claudes
+```
+
+Ensure `~/.local/bin` is in your PATH (add to `~/.bashrc` if needed):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### 4. Set up persistent Claude Code authentication (one-time)
 
 Generate a long-lived OAuth token so containers don't require browser auth on every rebuild:
 
 ```bash
-claude setup-token          # Follow prompts, save token to ~/.claude/.setup-token
+claude setup-token
+```
+
+Save the token to `~/.claude/.setup-token`:
+
+```bash
+mkdir -p ~/.claude
+echo "YOUR_TOKEN_HERE" > ~/.claude/.setup-token
 chmod 600 ~/.claude/.setup-token
 ```
 
 The host-side `claudes` reads this token and passes it via `CLAUDE_CODE_OAUTH_TOKEN` env var
 through SSH, so containers authenticate automatically.
+
+### 5. Create your first DevPod workspace
+
+```bash
+devpod up ~/git_wsl/myproject --ide none
+```
+
+Then connect:
+
+```bash
+cd ~/git_wsl/myproject
+claudes
+```
 
 ## Files
 
