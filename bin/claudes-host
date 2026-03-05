@@ -1,0 +1,408 @@
+#!/usr/bin/env bash
+# claudes — Smart DevPod + tmux session manager for Claude Code
+#
+# Usage:
+#   claudes                  # Auto-detect workspace from PWD, or show menu
+#   claudes WORKSPACE        # Connect to workspace's default tmux session
+#   claudes WORKSPACE LABEL  # Connect/create WORKSPACE-LABEL tmux session
+#   claudes --list           # Show all workspaces + sessions
+#   claudes --help           # Show this help
+#
+# From WSL in ~/git_wsl/rcom:  claudes → auto-detects rcom → SSH → tmux + Claude
+# From phone via Termius:       claudes → interactive menu of sessions + workspaces
+#
+# Backwards compatible: claude-session symlink still works.
+
+set -euo pipefail
+
+# ─── Constants ───
+
+DEVPOD_WS_DIR="$HOME/.devpod/contexts/default/workspaces"
+SSH_TIMEOUT=3
+
+# ─── Associative arrays for workspace data ───
+
+declare -A DIR_TO_WS    # /home/sean/git_wsl/rcom → rcom
+declare -A WS_UID       # rcom → default-rc-4f00c
+declare -A WS_DIR       # rcom → /home/sean/git_wsl/rcom
+declare -a WS_LIST=()   # ordered list of workspace names
+
+# ─── Workspace Discovery ───
+
+discover_workspaces() {
+    [ -d "$DEVPOD_WS_DIR" ] || return 0
+
+    for ws_dir in "$DEVPOD_WS_DIR"/*/; do
+        local json="$ws_dir/workspace.json"
+        [ -f "$json" ] || continue
+
+        # Parse JSON without jq — extract id, uid, localFolder using grep+sed
+        local id uid folder
+        id=$(grep -o '"id":"[^"]*"' "$json" | head -1 | sed 's/"id":"//;s/"//')
+        uid=$(grep -o '"uid":"[^"]*"' "$json" | head -1 | sed 's/"uid":"//;s/"//')
+        folder=$(grep -o '"localFolder":"[^"]*"' "$json" | head -1 | sed 's/"localFolder":"//;s/"//')
+
+        [ -n "$id" ] || continue
+
+        WS_LIST+=("$id")
+        WS_UID["$id"]="$uid"
+        if [ -n "$folder" ]; then
+            WS_DIR["$id"]="$folder"
+            DIR_TO_WS["$folder"]="$id"
+        fi
+    done
+}
+
+# ─── Detect Running Workspaces ───
+
+declare -A WS_RUNNING  # rcom → 1
+
+detect_running() {
+    local containers
+    containers=$(docker ps --format "{{.Names}}" 2>/dev/null || true)
+    [ -n "$containers" ] || return 0
+
+    for ws in "${WS_LIST[@]}"; do
+        local uid="${WS_UID[$ws]:-}"
+        [ -n "$uid" ] || continue
+        if echo "$containers" | grep -q "^${uid}-"; then
+            WS_RUNNING["$ws"]=1
+        fi
+    done
+}
+
+# ─── PWD Auto-Detection ───
+# Walk up from $PWD checking each directory against DIR_TO_WS
+
+detect_workspace_from_pwd() {
+    local dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        if [ -n "${DIR_TO_WS[$dir]:-}" ]; then
+            echo "${DIR_TO_WS[$dir]}"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+    return 1
+}
+
+# ─── Remote Tmux Session Probing ───
+
+declare -A WS_SESSIONS  # rcom → "rcom,rcom-frontend"
+
+probe_remote_sessions() {
+    local pids=()
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    for ws in "${WS_LIST[@]}"; do
+        [ "${WS_RUNNING[$ws]:-}" = "1" ] || continue
+        (
+            ssh -o ConnectTimeout="$SSH_TIMEOUT" -o BatchMode=yes \
+                "${ws}.devpod" \
+                "tmux list-sessions -F '#{session_name}' 2>/dev/null || true" \
+                > "$tmpdir/$ws" 2>/dev/null || true
+        ) &
+        pids+=($!)
+    done
+
+    # Wait for all SSH probes
+    for pid in "${pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+
+    # Read results
+    for ws in "${WS_LIST[@]}"; do
+        [ -f "$tmpdir/$ws" ] || continue
+        local sessions
+        sessions=$(cat "$tmpdir/$ws")
+        if [ -n "$sessions" ]; then
+            WS_SESSIONS["$ws"]=$(echo "$sessions" | tr '\n' ',' | sed 's/,$//')
+        fi
+    done
+
+    rm -rf "$tmpdir"
+}
+
+# ─── Show Help ───
+
+show_help() {
+    sed -n '2,14s/^# //p' "$0"
+}
+
+# ─── Show List ───
+
+show_list() {
+    echo ""
+    echo "  DevPod Workspaces"
+    echo "  ═════════════════"
+    echo ""
+
+    if [ ${#WS_LIST[@]} -eq 0 ]; then
+        echo "  No workspaces found."
+        echo ""
+        return
+    fi
+
+    # Running
+    local has_running=0
+    for ws in "${WS_LIST[@]}"; do
+        if [ "${WS_RUNNING[$ws]:-}" = "1" ]; then
+            if [ "$has_running" -eq 0 ]; then
+                echo "  Running:"
+                has_running=1
+            fi
+            local dir="${WS_DIR[$ws]:-?}"
+            dir="${dir/#$HOME/\~}"
+            printf "    %-22s %s\n" "$ws" "$dir"
+        fi
+    done
+    [ "$has_running" -eq 1 ] && echo ""
+
+    # Stopped
+    local has_stopped=0
+    for ws in "${WS_LIST[@]}"; do
+        if [ "${WS_RUNNING[$ws]:-}" != "1" ]; then
+            if [ "$has_stopped" -eq 0 ]; then
+                echo "  Stopped:"
+                has_stopped=1
+            fi
+            local dir="${WS_DIR[$ws]:-?}"
+            dir="${dir/#$HOME/\~}"
+            printf "    %-22s %s\n" "$ws" "$dir"
+        fi
+    done
+    [ "$has_stopped" -eq 1 ] && echo ""
+    return 0
+}
+
+# ─── Connect to Workspace ───
+
+connect() {
+    local ws="$1"
+    local session="${2:-$ws}"
+
+    # Verify workspace exists
+    if [ -z "${WS_UID[$ws]:-}" ]; then
+        echo "  Error: unknown workspace '$ws'"
+        echo "  Run 'claudes --list' to see available workspaces."
+        exit 1
+    fi
+
+    # Start workspace if not running
+    if [ "${WS_RUNNING[$ws]:-}" != "1" ]; then
+        echo "  Workspace '$ws' is not running. Starting..."
+        local ws_source="${WS_DIR[$ws]:-}"
+        if [ -n "$ws_source" ]; then
+            devpod up "$ws_source" --ide none
+        else
+            devpod up "$ws" --ide none
+        fi
+        echo ""
+    fi
+
+    # Inject Claude OAuth token into container (avoids re-auth on every rebuild)
+    local token_file="$HOME/.claude/.setup-token"
+    local token=""
+    if [ -f "$token_file" ]; then
+        token=$(head -1 "$token_file")
+    fi
+
+    echo "  Connecting to $ws (session: $session)..."
+    # Pass token via env var — works in tmux, Docker, SSH without browser auth
+    if [ -n "$token" ]; then
+        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH CLAUDE_CODE_OAUTH_TOKEN=$token; claudes ${session}"
+    else
+        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH; claudes ${session}"
+    fi
+}
+
+# ─── Interactive Menu ───
+
+interactive_menu() {
+    echo ""
+    echo "  claudes"
+    echo "  ═══════"
+    echo ""
+
+    probe_remote_sessions
+
+    local options=()      # display labels
+    local actions=()      # "connect:ws:session" or "start:ws"
+    local idx=1
+
+    # Active sessions (across all running workspaces)
+    local has_sessions=0
+    for ws in "${WS_LIST[@]}"; do
+        local sessions="${WS_SESSIONS[$ws]:-}"
+        [ -n "$sessions" ] || continue
+        if [ "$has_sessions" -eq 0 ]; then
+            echo "  Active sessions:"
+            has_sessions=1
+        fi
+        IFS=',' read -ra sess_arr <<< "$sessions"
+        for s in "${sess_arr[@]}"; do
+            printf "    %d) %-20s [%s]\n" "$idx" "$s" "$ws"
+            options+=("$s")
+            actions+=("connect:$ws:$s")
+            idx=$((idx + 1))
+        done
+    done
+    [ "$has_sessions" -eq 1 ] && echo ""
+
+    # Running workspaces without active sessions
+    local has_available=0
+    for ws in "${WS_LIST[@]}"; do
+        [ "${WS_RUNNING[$ws]:-}" = "1" ] || continue
+        [ -z "${WS_SESSIONS[$ws]:-}" ] || continue
+        if [ "$has_available" -eq 0 ]; then
+            echo "  Available (running):"
+            has_available=1
+        fi
+        printf "    %d) %s\n" "$idx" "$ws"
+        options+=("$ws")
+        actions+=("connect:$ws:$ws")
+        idx=$((idx + 1))
+    done
+    [ "$has_available" -eq 1 ] && echo ""
+
+    # Stopped workspaces
+    local has_stopped=0
+    for ws in "${WS_LIST[@]}"; do
+        [ "${WS_RUNNING[$ws]:-}" != "1" ] || continue
+        if [ "$has_stopped" -eq 0 ]; then
+            echo "  Stopped:"
+            has_stopped=1
+        fi
+        printf "    %d) %s\n" "$idx" "$ws"
+        options+=("$ws")
+        actions+=("start:$ws")
+        idx=$((idx + 1))
+    done
+    [ "$has_stopped" -eq 1 ] && echo ""
+
+    local max=$((idx - 1))
+
+    if [ "$max" -eq 0 ]; then
+        echo "  No workspaces found."
+        echo "  Create one with: devpod up ~/git_wsl/PROJECT --ide none"
+        echo ""
+        exit 0
+    fi
+
+    echo "    q) Quit"
+    echo ""
+    read -r -p "  Choose [1-${max}/q]: " choice
+
+    case "$choice" in
+        q|Q)
+            exit 0
+            ;;
+        [0-9]*)
+            local chosen=$((choice - 1))
+            if [ "$chosen" -ge 0 ] && [ "$chosen" -lt "$max" ]; then
+                local action="${actions[$chosen]}"
+                local act_type="${action%%:*}"
+                local rest="${action#*:}"
+                local act_ws="${rest%%:*}"
+                local act_session="${rest#*:}"
+
+                if [ "$act_type" = "start" ]; then
+                    connect "$act_ws" "$act_ws"
+                else
+                    connect "$act_ws" "$act_session"
+                fi
+            else
+                echo "  Invalid choice."
+                exit 1
+            fi
+            ;;
+        *)
+            echo "  Invalid choice."
+            exit 1
+            ;;
+    esac
+}
+
+# ─── Legacy flag compat (claude-session -c WORKSPACE) ───
+
+handle_legacy_flags() {
+    case "${1:-}" in
+        -c|--container)
+            # claude-session -c WORKSPACE → claudes WORKSPACE
+            if [ -n "${2:-}" ]; then
+                connect "$2" "$2"
+            else
+                echo "Usage: claudes WORKSPACE"
+                show_list
+                exit 1
+            fi
+            ;;
+        -d|--devpod)
+            show_list
+            exit 0
+            ;;
+        *)
+            return 1  # not a legacy flag
+            ;;
+    esac
+}
+
+# ─── Main ───
+
+main() {
+    discover_workspaces
+    detect_running
+
+    case "${1:-}" in
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        --list|-l)
+            show_list
+            exit 0
+            ;;
+        "")
+            # No args: auto-detect from PWD, or show menu
+            local ws
+            if ws=$(detect_workspace_from_pwd); then
+                connect "$ws" "$ws"
+            else
+                interactive_menu
+            fi
+            ;;
+        -*)
+            # Try legacy flags first
+            if ! handle_legacy_flags "$@"; then
+                echo "  Unknown option: $1"
+                show_help
+                exit 1
+            fi
+            ;;
+        *)
+            local ws="$1"
+            local label="${2:-}"
+
+            # If arg isn't a known workspace, try auto-detect from PWD
+            # e.g. "claudes frontend" in ~/git_wsl/rcom → rcom-frontend
+            if [ -z "${WS_UID[$ws]:-}" ]; then
+                local detected
+                if detected=$(detect_workspace_from_pwd); then
+                    # Treat the arg as a label for the auto-detected workspace
+                    connect "$detected" "${detected}-${ws}"
+                else
+                    echo "  Error: unknown workspace '$ws'"
+                    echo "  Run 'claudes --list' to see available workspaces."
+                    exit 1
+                fi
+            elif [ -n "$label" ]; then
+                connect "$ws" "${ws}-${label}"
+            else
+                connect "$ws" "$ws"
+            fi
+            ;;
+    esac
+}
+
+main "$@"
