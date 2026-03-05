@@ -93,7 +93,23 @@ attach_or_create() {
     fi
 
     if tmux has-session -t "$session" 2>/dev/null; then
-        exec tmux attach-session -t "$session"
+        # Check if session already has a client attached
+        local attached
+        attached=$(tmux display-message -t "$session" -p '#{session_attached}' 2>/dev/null || echo "0")
+        if [ "$attached" -gt 0 ]; then
+            # Session in use — find next available numbered name
+            local orig_dir
+            orig_dir=$(tmux display-message -t "$session" -p '#{pane_current_path}' 2>/dev/null || echo "$workdir")
+            local n=2
+            while tmux has-session -t "${session}-${n}" 2>/dev/null; do
+                n=$((n + 1))
+            done
+            local new_session="${session}-${n}"
+            echo "  Session '$session' already attached. Creating '$new_session'..."
+            exec tmux new-session -s "$new_session" -c "$orig_dir" "claude; exec bash"
+        else
+            exec tmux attach-session -t "$session"
+        fi
     else
         echo "Creating new session: $session ($workdir)"
         exec tmux new-session -s "$session" -c "$workdir" "claude; exec bash"
