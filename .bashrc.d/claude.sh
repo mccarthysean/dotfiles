@@ -7,10 +7,12 @@ export PATH="$HOME/.local/bin:$PATH"
 # Used by Claude Code hooks (ntfy-permission.sh, ntfy-idle.sh) for phone notifications
 export NTFY_URL="http://ntfy-claude:80"
 
-# Auto-launch claude-session on interactive login (not already in tmux, not in VS Code)
+# Auto-launch claudes on interactive login (not already in tmux, not in VS Code)
 # DevPod SSH tunnels don't set $SSH_CONNECTION, so we check for interactive shell instead
 if [ -z "$TMUX" ] && [ -z "$VSCODE_INJECTION" ] && [[ $- == *i* ]]; then
-    if command -v claude-session &>/dev/null; then
+    if command -v claudes &>/dev/null; then
+        claudes
+    elif command -v claude-session &>/dev/null; then
         claude-session
     fi
 fi

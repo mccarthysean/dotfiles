@@ -1,6 +1,6 @@
 #!/bin/bash
 # DevPod dotfiles installer — runs inside each new container
-# Installs tmux, Claude Code, claude-session, and bash snippets
+# Installs tmux, Claude Code, claudes (session manager), and bash snippets
 # Assumes Debian/Ubuntu-based containers (apt-get)
 
 set -euo pipefail
@@ -36,12 +36,13 @@ if [ -f "$DOTFILES_DIR/.tmux.conf" ]; then
     echo "  ✓ .tmux.conf"
 fi
 
-# ─── claude-session script ───
+# ─── claudes script ───
 mkdir -p ~/.local/bin
-if [ -f "$DOTFILES_DIR/bin/claude-session" ]; then
-    cp "$DOTFILES_DIR/bin/claude-session" ~/.local/bin/
-    chmod +x ~/.local/bin/claude-session
-    echo "  ✓ claude-session"
+if [ -f "$DOTFILES_DIR/bin/claudes" ]; then
+    cp "$DOTFILES_DIR/bin/claudes" ~/.local/bin/
+    chmod +x ~/.local/bin/claudes
+    ln -sf ~/.local/bin/claudes ~/.local/bin/claude-session  # compat
+    echo "  ✓ claudes"
 fi
 
 # ─── Bash snippets ───
