@@ -45,6 +45,12 @@ if [ -f "$DOTFILES_DIR/bin/claudes" ]; then
     echo "  ✓ claudes"
 fi
 
+# ─── .bashrc ───
+if [ -f "$DOTFILES_DIR/.bashrc" ]; then
+    cp "$DOTFILES_DIR/.bashrc" ~/
+    echo "  ✓ .bashrc"
+fi
+
 # ─── Bash snippets ───
 mkdir -p ~/.bashrc.d
 for f in "$DOTFILES_DIR"/.bashrc.d/*.sh; do
@@ -52,15 +58,5 @@ for f in "$DOTFILES_DIR"/.bashrc.d/*.sh; do
     cp "$f" ~/.bashrc.d/
     echo "  ✓ .bashrc.d/$(basename "$f")"
 done
-
-# ─── Source .bashrc.d from .bashrc if not already configured ───
-if ! grep -q 'bashrc.d' ~/.bashrc 2>/dev/null; then
-    cat >> ~/.bashrc <<'SNIPPET'
-
-# Source custom dotfile snippets
-for f in ~/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done
-SNIPPET
-    echo "  ✓ Added .bashrc.d sourcing to .bashrc"
-fi
 
 echo "Dotfiles installed successfully."
