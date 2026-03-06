@@ -5,7 +5,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # ntfy notification endpoint — shared ntfy-claude container on traefik-public Docker network
 # Used by Claude Code hooks (ntfy-permission.sh, ntfy-idle.sh) for phone notifications
-export NTFY_URL="http://ntfy-claude:80"
+export NTFY_URL="${NTFY_URL:-http://ntfy-claude:80}"
 
 # Auto-launch claudes on interactive login (not already in tmux, not in VS Code)
 # DevPod SSH tunnels don't set $SSH_CONNECTION, so we check for interactive shell instead

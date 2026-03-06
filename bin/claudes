@@ -7,7 +7,7 @@
 #   claudes --list       # List all Claude sessions
 #   claudes --help       # Show this help
 #
-# New sessions start in $PWD (cd to your project first, then run claudes).
+# New sessions auto-detect the workspace dir from devcontainer.json.
 #
 # Examples:
 #   cd /project && claudes rcom     # session in project dir
@@ -35,6 +35,52 @@ ensure_authenticated() {
     echo ""
     claude auth login
     echo ""
+}
+
+# ─── Auto-detect workspace directory from devcontainer.json ───
+# DevPod mounts the project into the container at the path specified by
+# "workspaceFolder" in devcontainer.json. We search common mount parents
+# for this file and extract the configured path. This ensures Claude Code
+# starts in the project root where it can find CLAUDE.md, .claude/, etc.
+detect_workdir() {
+    local json
+    # Search common DevPod/devcontainer mount points for devcontainer.json
+    for parent in /workspaces /workspace /project; do
+        # Check parent itself (e.g. /workspace/.devcontainer/devcontainer.json)
+        if [ -f "$parent/.devcontainer/devcontainer.json" ]; then
+            json="$parent/.devcontainer/devcontainer.json"
+            break
+        fi
+        # Check one level down (e.g. /workspaces/wibble/.devcontainer/devcontainer.json)
+        for sub in "$parent"/*/; do
+            if [ -f "${sub}.devcontainer/devcontainer.json" ]; then
+                json="${sub}.devcontainer/devcontainer.json"
+                break 2
+            fi
+        done
+    done
+
+    if [ -n "${json:-}" ]; then
+        # Extract workspaceFolder value from JSON (no jq dependency)
+        local folder
+        folder=$(grep -o '"workspaceFolder"[[:space:]]*:[[:space:]]*"[^"]*"' "$json" \
+            | sed 's/.*"workspaceFolder"[[:space:]]*:[[:space:]]*"//;s/"$//')
+        if [ -n "$folder" ] && [ -d "$folder" ]; then
+            echo "$folder"
+            return 0
+        fi
+    fi
+
+    # Fallback: check for project markers in common locations
+    for dir in /project /workspace /workspaces/*; do
+        if [ -d "$dir" ] && { [ -f "$dir/CLAUDE.md" ] || [ -d "$dir/.claude" ] || [ -d "$dir/.git" ]; }; then
+            echo "$dir"
+            return 0
+        fi
+    done
+
+    # Final fallback
+    echo "$PWD"
 }
 
 validate_session_name() {
@@ -78,7 +124,7 @@ set_terminal_title() {
 
 attach_or_create() {
     local session="$1"
-    local workdir="${2:-$PWD}"
+    local workdir="${2:-$(detect_workdir)}"
 
     validate_session_name "$session"
     set_terminal_title "$session"

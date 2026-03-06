@@ -23,6 +23,28 @@ if [ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]; then
     echo "  ✓ Packages installed"
 fi
 
+# ─── Install GitHub CLI (gh) if missing ───
+if ! command -v gh &>/dev/null; then
+    echo "  Installing GitHub CLI..."
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | $SUDO dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        | $SUDO tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y -qq gh >/dev/null 2>&1
+    echo "  ✓ GitHub CLI installed"
+fi
+
+# ─── Install AWS CLI if missing ───
+if ! command -v aws &>/dev/null; then
+    echo "  Installing AWS CLI..."
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+    unzip -qo /tmp/awscliv2.zip -d /tmp
+    $SUDO /tmp/aws/install --update >/dev/null 2>&1
+    rm -rf /tmp/awscliv2.zip /tmp/aws
+    echo "  ✓ AWS CLI installed"
+fi
+
 # ─── Install Claude Code if missing ───
 if ! command -v claude &>/dev/null; then
     echo "  Installing Claude Code..."

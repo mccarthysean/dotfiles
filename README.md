@@ -4,6 +4,28 @@ Shared dotfiles injected into every [DevPod](https://devpod.sh) container via `D
 Provides tmux, Claude Code CLI, and the `claudes` session manager for phone-based
 development via Termius + Tailscale.
 
+## Why This Exists
+
+Claude Code is a terminal-based AI coding assistant — no GUI, no IDE required.
+This makes it uniquely suited for mobile development:
+
+- **tmux** keeps sessions alive across disconnects. Start a Claude Code session
+  from your desktop, detach, walk away, and reconnect from your phone — the full
+  conversation and context is still there. Multiple sessions per workspace let you
+  run parallel Claude tasks.
+
+- **Tailscale** creates a private mesh VPN between your devices. Your WSL2 instance
+  gets a stable IP (100.x.x.x) accessible from anywhere — no port forwarding, no
+  dynamic DNS, no exposing SSH to the internet.
+
+- **Termius** (Android/iOS) provides a proper terminal with keyboard support,
+  paste, and tmux-aware features. Combined with Tailscale, it turns your phone
+  into a full development terminal.
+
+The result: you can write code, review PRs, debug production issues, and run
+AI-assisted development sessions from your phone — on the bus, in a waiting room,
+or on the couch — with the same power as sitting at your desktop.
+
 ## What Gets Installed
 
 `install.sh` runs automatically inside each new DevPod container and installs:
@@ -36,6 +58,11 @@ No SSH ports or openssh-server needed inside containers.
 # From WSL — DevPod auto-discovers .devcontainer/devcontainer.json
 devpod up ~/git_wsl/alerts --ide none
 
+# Repos with multiple devcontainer configs — DevPod shows a picker menu.
+# Or specify explicitly with --devcontainer-path:
+devpod up ~/git_wsl/wibble --devcontainer-path .devcontainer/devpod/devcontainer.json --ide none
+devpod up ~/git_wsl/spartans-hockey --devcontainer-path .devcontainer/devpod/devcontainer.json --ide none
+
 # Or with VS Code:
 devpod up ~/git_wsl/alerts --ide vscode
 ```
@@ -53,6 +80,8 @@ cd ~/git_wsl/rcom && claudes    # Auto-detects rcom workspace
 claudes alerts                  # Connect to alerts workspace
 claudes rcom frontend           # Connect to rcom-frontend session
 claudes frontend                # From rcom dir → auto-creates rcom-frontend
+claudes --local                 # Local tmux session in current dir (no DevPod)
+claudes --local mywork          # Local tmux session named "mywork"
 claudes --list                  # List all workspaces + status
 ```
 
