@@ -89,15 +89,29 @@ detect_workspace_from_pwd() {
 
 # ─── Remote Tmux Session Probing ───
 
-declare -a LOCAL_SESSIONS=()  # local tmux sessions on WSL host
+declare -a LOCAL_SESSIONS=()    # local tmux sessions on WSL host
+declare -A LOCAL_SESSION_DIR=() # session → pane working directory
+declare -A LOCAL_SESSION_ATT=() # session → attached client count (0 = detached)
+declare -A LOCAL_SESSION_TTL=() # session → pane title (e.g. "✳ Claude Code")
 
 detect_local_sessions() {
     local sessions
-    sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+    sessions=$(tmux list-sessions -F '#{session_name}|#{session_attached}' 2>/dev/null || true)
     [ -n "$sessions" ] || return 0
-    while IFS= read -r s; do
-        LOCAL_SESSIONS+=("$s")
+    while IFS='|' read -r name attached; do
+        LOCAL_SESSIONS+=("$name")
+        LOCAL_SESSION_ATT["$name"]="$attached"
     done <<< "$sessions"
+
+    # Get active pane's working directory and title per session
+    local panes
+    panes=$(tmux list-windows -a -F '#{session_name}|#{window_active}|#{pane_current_path}|#{pane_title}' 2>/dev/null || true)
+    [ -n "$panes" ] || return 0
+    while IFS='|' read -r name active path title; do
+        [ "$active" = "1" ] || continue
+        LOCAL_SESSION_DIR["$name"]="$path"
+        LOCAL_SESSION_TTL["$name"]="$title"
+    done <<< "$panes"
 }
 
 declare -A WS_SESSIONS  # rcom → "rcom,rcom-frontend"
@@ -248,7 +262,17 @@ interactive_menu() {
     if [ ${#LOCAL_SESSIONS[@]} -gt 0 ]; then
         echo "  Local sessions:"
         for s in "${LOCAL_SESSIONS[@]}"; do
-            printf "    %d) %s\n" "$idx" "$s"
+            local dir="${LOCAL_SESSION_DIR[$s]:-}"
+            dir="${dir/#$HOME/\~}"
+            local att="${LOCAL_SESSION_ATT[$s]:-0}"
+            local suffix=""
+            if [ "$att" = "1" ]; then
+                suffix="*"
+            elif [ "$att" -gt 1 ] 2>/dev/null; then
+                suffix="*${att}"
+            fi
+            # Show: idx) name  directory  attached-indicator
+            printf "    %d) %-12s %-26s %s\n" "$idx" "$s" "$dir" "$suffix"
             options+=("$s")
             actions+=("local:$s")
             idx=$((idx + 1))
@@ -323,11 +347,10 @@ interactive_menu() {
             exit 0
             ;;
         n|N)
-            read -r -p "  Session name: " session_name
-            if [ -z "$session_name" ]; then
-                echo "  No name provided."
-                exit 1
-            fi
+            local default_name
+            default_name=$(basename "$PWD")
+            read -r -p "  Session name [$default_name]: " session_name
+            session_name="${session_name:-$default_name}"
             exec tmux new-session -s "$session_name" -c "$PWD"
             ;;
         [0-9]*)
@@ -403,7 +426,8 @@ main() {
             ;;
         --local|-L)
             # Local tmux session in current directory (no DevPod/SSH)
-            local session="${2:-local}"
+            # Auto-name from directory basename if no name given
+            local session="${2:-$(basename "$PWD")}"
             exec tmux new-session -A -s "$session" -c "$PWD"
             ;;
         "")
