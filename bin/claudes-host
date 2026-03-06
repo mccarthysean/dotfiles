@@ -5,6 +5,7 @@
 #   claudes                  # Auto-detect workspace from PWD, or show menu
 #   claudes WORKSPACE        # Connect to workspace's default tmux session
 #   claudes WORKSPACE LABEL  # Connect/create WORKSPACE-LABEL tmux session
+#   claudes --local [NAME]   # Local tmux session in current dir (no DevPod)
 #   claudes --list           # Show all workspaces + sessions
 #   claudes --help           # Show this help
 #
@@ -87,6 +88,17 @@ detect_workspace_from_pwd() {
 }
 
 # ─── Remote Tmux Session Probing ───
+
+declare -a LOCAL_SESSIONS=()  # local tmux sessions on WSL host
+
+detect_local_sessions() {
+    local sessions
+    sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+    [ -n "$sessions" ] || return 0
+    while IFS= read -r s; do
+        LOCAL_SESSIONS+=("$s")
+    done <<< "$sessions"
+}
 
 declare -A WS_SESSIONS  # rcom → "rcom,rcom-frontend"
 
@@ -225,11 +237,24 @@ interactive_menu() {
     echo "  ═══════"
     echo ""
 
+    detect_local_sessions
     probe_remote_sessions
 
     local options=()      # display labels
-    local actions=()      # "connect:ws:session" or "start:ws"
+    local actions=()      # "local:session", "connect:ws:session", or "start:ws"
     local idx=1
+
+    # Local tmux sessions on WSL host
+    if [ ${#LOCAL_SESSIONS[@]} -gt 0 ]; then
+        echo "  Local sessions:"
+        for s in "${LOCAL_SESSIONS[@]}"; do
+            printf "    %d) %s\n" "$idx" "$s"
+            options+=("$s")
+            actions+=("local:$s")
+            idx=$((idx + 1))
+        done
+        echo ""
+    fi
 
     # Active sessions (across all running workspaces)
     local has_sessions=0
@@ -237,7 +262,7 @@ interactive_menu() {
         local sessions="${WS_SESSIONS[$ws]:-}"
         [ -n "$sessions" ] || continue
         if [ "$has_sessions" -eq 0 ]; then
-            echo "  Active sessions:"
+            echo "  DevPod sessions:"
             has_sessions=1
         fi
         IFS=',' read -ra sess_arr <<< "$sessions"
@@ -284,19 +309,26 @@ interactive_menu() {
     local max=$((idx - 1))
 
     if [ "$max" -eq 0 ]; then
-        echo "  No workspaces found."
-        echo "  Create one with: devpod up ~/git_wsl/PROJECT --ide none"
+        echo "  No sessions or workspaces found."
         echo ""
-        exit 0
     fi
 
+    echo "    n) New local session"
     echo "    q) Quit"
     echo ""
-    read -r -p "  Choose [1-${max}/q]: " choice
+    read -r -p "  Choose [1-${max}/n/q]: " choice
 
     case "$choice" in
         q|Q)
             exit 0
+            ;;
+        n|N)
+            read -r -p "  Session name: " session_name
+            if [ -z "$session_name" ]; then
+                echo "  No name provided."
+                exit 1
+            fi
+            exec tmux new-session -s "$session_name" -c "$PWD"
             ;;
         [0-9]*)
             local chosen=$((choice - 1))
@@ -304,14 +336,20 @@ interactive_menu() {
                 local action="${actions[$chosen]}"
                 local act_type="${action%%:*}"
                 local rest="${action#*:}"
-                local act_ws="${rest%%:*}"
-                local act_session="${rest#*:}"
 
-                if [ "$act_type" = "start" ]; then
-                    connect "$act_ws" "$act_ws"
-                else
-                    connect "$act_ws" "$act_session"
-                fi
+                case "$act_type" in
+                    local)
+                        exec tmux attach-session -t "$rest"
+                        ;;
+                    start)
+                        connect "$rest" "$rest"
+                        ;;
+                    connect)
+                        local act_ws="${rest%%:*}"
+                        local act_session="${rest#*:}"
+                        connect "$act_ws" "$act_session"
+                        ;;
+                esac
             else
                 echo "  Invalid choice."
                 exit 1
@@ -362,6 +400,11 @@ main() {
         --list|-l)
             show_list
             exit 0
+            ;;
+        --local|-L)
+            # Local tmux session in current directory (no DevPod/SSH)
+            local session="${2:-local}"
+            exec tmux new-session -A -s "$session" -c "$PWD"
             ;;
         "")
             # No args: auto-detect from PWD, or show menu
