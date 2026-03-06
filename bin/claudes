@@ -133,7 +133,7 @@ attach_or_create() {
         if tmux has-session -t "$session" 2>/dev/null; then
             exec tmux switch-client -t "$session"
         else
-            tmux new-session -d -s "$session" -c "$workdir" "claude; exec bash"
+            tmux new-session -d -s "$session" -c "$workdir" -e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}" "claude; exec bash"
             exec tmux switch-client -t "$session"
         fi
     fi
@@ -152,13 +152,13 @@ attach_or_create() {
             done
             local new_session="${session}-${n}"
             echo "  Session '$session' already attached. Creating '$new_session'..."
-            exec tmux new-session -s "$new_session" -c "$orig_dir" "claude; exec bash"
+            exec tmux new-session -s "$new_session" -c "$orig_dir" -e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}" "claude; exec bash"
         else
             exec tmux attach-session -t "$session"
         fi
     else
         echo "Creating new session: $session ($workdir)"
-        exec tmux new-session -s "$session" -c "$workdir" "claude; exec bash"
+        exec tmux new-session -s "$session" -c "$workdir" -e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}" "claude; exec bash"
     fi
 }
 
