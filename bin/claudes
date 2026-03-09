@@ -91,6 +91,19 @@ validate_session_name() {
     fi
 }
 
+suggest_next_name() {
+    local base="$1"
+    if ! tmux has-session -t "$base" 2>/dev/null; then
+        echo "$base"
+        return
+    fi
+    local i=2
+    while tmux has-session -t "${base}-${i}" 2>/dev/null; do
+        i=$((i + 1))
+    done
+    echo "${base}-${i}"
+}
+
 show_help() {
     sed -n '2,15s/^# //p' "$0"
 }
@@ -139,23 +152,7 @@ attach_or_create() {
     fi
 
     if tmux has-session -t "$session" 2>/dev/null; then
-        # Check if session already has a client attached
-        local attached
-        attached=$(tmux display-message -t "$session" -p '#{session_attached}' 2>/dev/null || echo "0")
-        if [ "$attached" -gt 0 ]; then
-            # Session in use — find next available numbered name
-            local orig_dir
-            orig_dir=$(tmux display-message -t "$session" -p '#{pane_current_path}' 2>/dev/null || echo "$workdir")
-            local n=2
-            while tmux has-session -t "${session}-${n}" 2>/dev/null; do
-                n=$((n + 1))
-            done
-            local new_session="${session}-${n}"
-            echo "  Session '$session' already attached. Creating '$new_session'..."
-            exec tmux new-session -s "$new_session" -c "$orig_dir" -e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}" -e "ANTHROPIC_API_KEY=" "claude; exec bash"
-        else
-            exec tmux attach-session -t "$session"
-        fi
+        exec tmux attach-session -t "$session"
     else
         echo "Creating new session: $session ($workdir)"
         exec tmux new-session -s "$session" -c "$workdir" -e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}" -e "ANTHROPIC_API_KEY=" "claude; exec bash"
@@ -163,6 +160,8 @@ attach_or_create() {
 }
 
 interactive_menu() {
+    local suggested="${1:-}"
+
     echo ""
     echo "  Claude Code Sessions"
     echo "  ════════════════════"
@@ -172,9 +171,9 @@ interactive_menu() {
     local sessions=()
     local count=0
     local raw
-    raw=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+    raw=$(tmux list-sessions -F '#{session_name}|#{session_attached}' 2>/dev/null || true)
     if [ -n "$raw" ]; then
-        while IFS= read -r name; do
+        while IFS='|' read -r name attached; do
             sessions+=("$name")
             count=$((count + 1))
         done <<< "$raw"
@@ -184,28 +183,63 @@ interactive_menu() {
         echo "  Existing sessions:"
         local i=1
         for name in "${sessions[@]}"; do
-            local path
+            local path att suffix=""
             path=$(tmux display-message -t "$name" -p '#{pane_current_path}' 2>/dev/null || echo "?")
             path="${path/#$HOME/\~}"
-            printf "    %d) %s  (%s)\n" "$i" "$name" "$path"
+            att=$(tmux display-message -t "$name" -p '#{session_attached}' 2>/dev/null || echo "0")
+            if [ "$att" = "1" ]; then
+                suffix=" *"
+            elif [ "$att" -gt 1 ] 2>/dev/null; then
+                suffix=" *${att}"
+            fi
+            printf "    %d) %-20s %s%s\n" "$i" "$name" "$path" "$suffix"
             i=$((i + 1))
         done
         echo ""
     fi
 
-    echo "    n) New session"
+    # Suggest a name for new sessions
+    local next_name
+    if [ -n "$suggested" ]; then
+        next_name=$(suggest_next_name "$suggested")
+    else
+        next_name=""
+    fi
+
+    if [ -n "$next_name" ]; then
+        echo "    c) Create new session: $next_name"
+    fi
+    echo "    n) New session (custom name)"
     echo "    q) Quit"
     echo ""
 
-    read -r -p "  Choose [1-${count}/n/q]: " choice
+    local prompt="  Choose [1-${count}"
+    [ -n "$next_name" ] && prompt="${prompt}/c"
+    prompt="${prompt}/n/q]: "
+    read -r -p "$prompt" choice
 
     case "$choice" in
         q|Q)
             exit 0
             ;;
+        c|C)
+            if [ -n "$next_name" ]; then
+                attach_or_create "$next_name"
+            else
+                echo "  Invalid choice."
+                exit 1
+            fi
+            ;;
         n|N)
             echo ""
-            read -r -p "  Session name: " session_name
+            local default_name="${suggested:-}"
+            if [ -n "$default_name" ]; then
+                default_name=$(suggest_next_name "$default_name")
+                read -r -p "  Session name [$default_name]: " session_name
+                session_name="${session_name:-$default_name}"
+            else
+                read -r -p "  Session name: " session_name
+            fi
             if [ -z "$session_name" ]; then
                 echo "  No name given, aborting."
                 exit 1
@@ -222,8 +256,8 @@ interactive_menu() {
             fi
             ;;
         *)
-            # Treat any other input as a session name
-            attach_or_create "$choice"
+            echo "  Invalid choice."
+            exit 1
             ;;
     esac
 }
@@ -239,6 +273,16 @@ case "${1:-}" in
         list_sessions
         exit 0
         ;;
+    --attach)
+        # Direct attach — called by host-side claudes to skip container menu
+        ensure_authenticated
+        attach_or_create "${2:?'--attach requires session name'}"
+        ;;
+    --new)
+        # Direct create — called by host-side claudes to skip container menu
+        ensure_authenticated
+        attach_or_create "${2:?'--new requires session name'}"
+        ;;
     *)
         # Authenticate before entering tmux (paste works better outside tmux)
         ensure_authenticated
@@ -246,7 +290,13 @@ case "${1:-}" in
         if [ -z "${1:-}" ]; then
             interactive_menu
         else
-            attach_or_create "$1" "${2:-}"
+            # If sessions already exist, show menu so user can choose
+            existing=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+            if [ -n "$existing" ]; then
+                interactive_menu "$1"
+            else
+                attach_or_create "$1" "${2:-}"
+            fi
         fi
         ;;
 esac

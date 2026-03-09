@@ -35,7 +35,7 @@ or on the couch — with the same power as sitting at your desktop.
 | **tmux** | Persistent terminal sessions that survive disconnects |
 | **Claude Code CLI** | AI-powered coding assistant |
 | **claudes** | tmux session manager (auto-launches on login) |
-| **.tmux.conf** | Container-optimized tmux config (OSC 52 clipboard, right-click paste, status bar at top) |
+| **.tmux.conf** | Container-optimized tmux config (mouse scroll/drag, OSC 52 clipboard, status bar at top) |
 | **.bashrc** | Shell config (history, aliases, auto-venv, sources .bashrc.d/) |
 | **.bashrc.d/** | Bash snippets (PATH, auto-launch claudes) |
 
@@ -43,8 +43,8 @@ or on the couch — with the same power as sitting at your desktop.
 
 ```
 Phone (Termius) → Tailscale VPN → WSL2 (100.109.194.122:22)
-  → claudes → auto-detects workspace or shows menu → ssh WORKSPACE.devpod
-  → Container auto-launches claudes → tmux → Claude Code
+  → claudes → interactive menu → ssh WORKSPACE.devpod
+  → Container claudes → tmux → Claude Code
 ```
 
 DevPod provides built-in SSH tunneling via `ProxyCommand` entries in `~/.ssh/config`.
@@ -76,18 +76,17 @@ devpod up ~/git_wsl/alerts --ide vscode
 ### Connect from WSL host
 
 ```bash
-cd ~/git_wsl/rcom && claudes    # Auto-detects rcom workspace
-claudes alerts                  # Connect to alerts workspace
-claudes rcom frontend           # Connect to rcom-frontend session
-claudes frontend                # From rcom dir → auto-creates rcom-frontend
-claudes --local                 # Local tmux session in current dir (no DevPod)
-claudes --local mywork          # Local tmux session named "mywork"
-claudes --list                  # List all workspaces + status
+claudes                        # Always shows interactive menu (detected workspace shown as hint)
+claudes alerts                 # Connect to alerts workspace (shows menu if sessions exist)
+claudes rcom frontend          # Connect to rcom-frontend session
+claudes --local                # Local tmux session in current dir (no DevPod)
+claudes --local mywork         # Local tmux session named "mywork"
+claudes --list                 # List all workspaces + status
 ```
 
-Running `claudes` twice from the same workspace auto-creates numbered sessions
-(`rcom`, `rcom-2`, `rcom-3`, etc.) when the previous session already has a client attached.
-Detached sessions re-attach normally.
+`claudes` always shows an interactive menu — it never auto-connects. When sessions
+already exist inside a container, you choose between attaching to an existing session
+or creating a new one. New sessions are named sequentially: `rcom`, `rcom-2`, `rcom-3`.
 
 ### Manage workspaces
 
@@ -105,8 +104,26 @@ devpod delete alerts                           # Remove entirely
 | Detach (session persists) | `Ctrl+b`, `d` |
 | New window | `Ctrl+b`, `c` |
 | Switch window | `Ctrl+b`, `0-9` |
-| Copy mode | `Ctrl+b`, `[` |
+| Scroll up (enter copy mode) | Mouse wheel up |
+| Select text (copy to clipboard) | Click + drag |
+| Copy mode (keyboard) | `Ctrl+b`, `[` |
+| Exit copy mode | `q` |
 | Paste | `Ctrl+b`, `]` or right-click |
+
+## Updating Running Containers
+
+After editing dotfiles, deploy changes to all running DevPod containers:
+
+```bash
+bash ~/git_wsl/dotfiles/scripts/deploy.sh
+```
+
+This pushes `.tmux.conf`, `claudes`, `.bashrc`, and `.bashrc.d/` to all running
+containers in parallel, reloads tmux if active, and updates the host-side `claudes`
+script at `~/.local/bin/claudes`.
+
+New containers automatically get the latest dotfiles via `devpod up` (DevPod clones
+this repo and runs `install.sh`).
 
 ## Installation
 
@@ -140,9 +157,8 @@ The host-side script lives on your WSL machine (not inside containers). It handl
 discovery, auto-detection, and SSH tunneling into DevPod containers.
 
 ```bash
-mkdir -p ~/.local/bin
-cp ~/git_wsl/dotfiles/bin/claudes-host ~/.local/bin/claudes
-chmod +x ~/.local/bin/claudes
+# First time install (or use deploy.sh for updates):
+bash ~/git_wsl/dotfiles/scripts/deploy.sh
 ```
 
 Ensure `~/.local/bin` is in your PATH (add to `~/.bashrc` if needed):
@@ -179,8 +195,7 @@ devpod up ~/git_wsl/myproject --ide none
 Then connect:
 
 ```bash
-cd ~/git_wsl/myproject
-claudes
+claudes    # Interactive menu shows the new workspace
 ```
 
 ## Files
@@ -189,13 +204,15 @@ claudes
 dotfiles/
 ├── install.sh          # Main installer (runs in every new container)
 ├── .bashrc             # Shell config (history, aliases, auto-venv, sources .bashrc.d/)
-├── .tmux.conf          # tmux config (OSC 52, right-click paste, status top)
+├── .tmux.conf          # tmux config (mouse scroll/drag, OSC 52 clipboard, status top)
 ├── bin/
 │   ├── claudes         # Container-side tmux session manager
-│   ├── claudes-host    # Host-side (WSL) orchestrator — backup copy
+│   ├── claudes-host    # Host-side (WSL) orchestrator
 │   └── claude-session  # symlink → claudes (backwards compat)
-└── .bashrc.d/
-    └── *.sh            # Bash snippets (PATH, auto-launch on login)
+├── .bashrc.d/
+│   └── *.sh            # Bash snippets (PATH, auto-launch on login)
+└── scripts/
+    └── deploy.sh       # Push dotfiles updates to running containers + host
 ```
 
 ## Safety

@@ -150,6 +150,22 @@ probe_remote_sessions() {
     rm -rf "$tmpdir"
 }
 
+# ─── Session Name Helper ───
+
+suggest_next_name() {
+    local base="$1"
+    local sessions="$2"  # comma-separated list of existing sessions
+    if ! echo ",$sessions," | grep -q ",$base,"; then
+        echo "$base"
+        return
+    fi
+    local i=2
+    while echo ",$sessions," | grep -q ",${base}-${i},"; do
+        i=$((i + 1))
+    done
+    echo "${base}-${i}"
+}
+
 # ─── Show Help ───
 
 show_help() {
@@ -207,6 +223,7 @@ show_list() {
 connect() {
     local ws="$1"
     local session="${2:-$ws}"
+    local mode="${3:---attach}"  # --attach (default) or --new
 
     # Verify workspace exists
     if [ -z "${WS_UID[$ws]:-}" ]; then
@@ -237,9 +254,9 @@ connect() {
     echo "  Connecting to $ws (session: $session)..."
     # Pass token via env var — works in tmux, Docker, SSH without browser auth
     if [ -n "$token" ]; then
-        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH CLAUDE_CODE_OAUTH_TOKEN=$token; claudes ${session}"
+        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH CLAUDE_CODE_OAUTH_TOKEN=$token; claudes $mode ${session}"
     else
-        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH; claudes ${session}"
+        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH; claudes $mode ${session}"
     fi
 }
 
@@ -250,6 +267,12 @@ interactive_menu() {
     echo "  claudes"
     echo "  ═══════"
     echo ""
+
+    local detected_ws=""
+    if detected_ws=$(detect_workspace_from_pwd); then
+        echo "  (detected workspace: $detected_ws)"
+        echo ""
+    fi
 
     detect_local_sessions
     probe_remote_sessions
@@ -280,7 +303,7 @@ interactive_menu() {
         echo ""
     fi
 
-    # Active sessions (across all running workspaces)
+    # Active sessions (across all running workspaces) with "+ new" per workspace
     local has_sessions=0
     for ws in "${WS_LIST[@]}"; do
         local sessions="${WS_SESSIONS[$ws]:-}"
@@ -293,9 +316,16 @@ interactive_menu() {
         for s in "${sess_arr[@]}"; do
             printf "    %d) %-20s [%s]\n" "$idx" "$s" "$ws"
             options+=("$s")
-            actions+=("connect:$ws:$s")
+            actions+=("attach:$ws:$s")
             idx=$((idx + 1))
         done
+        # Add "+ new" entry for this workspace
+        local next_name
+        next_name=$(suggest_next_name "$ws" "$sessions")
+        printf "    %d) %-20s [%s] → %s\n" "$idx" "+ new" "$ws" "$next_name"
+        options+=("+ new $ws")
+        actions+=("new:$ws:$next_name")
+        idx=$((idx + 1))
     done
     [ "$has_sessions" -eq 1 ] && echo ""
 
@@ -305,12 +335,12 @@ interactive_menu() {
         [ "${WS_RUNNING[$ws]:-}" = "1" ] || continue
         [ -z "${WS_SESSIONS[$ws]:-}" ] || continue
         if [ "$has_available" -eq 0 ]; then
-            echo "  Available (running):"
+            echo "  Running (no sessions):"
             has_available=1
         fi
         printf "    %d) %s\n" "$idx" "$ws"
         options+=("$ws")
-        actions+=("connect:$ws:$ws")
+        actions+=("new:$ws:$ws")
         idx=$((idx + 1))
     done
     [ "$has_available" -eq 1 ] && echo ""
@@ -365,12 +395,17 @@ interactive_menu() {
                         exec tmux attach-session -t "$rest"
                         ;;
                     start)
-                        connect "$rest" "$rest"
+                        connect "$rest" "$rest" "--new"
                         ;;
-                    connect)
+                    attach)
                         local act_ws="${rest%%:*}"
                         local act_session="${rest#*:}"
-                        connect "$act_ws" "$act_session"
+                        connect "$act_ws" "$act_session" "--attach"
+                        ;;
+                    new)
+                        local act_ws="${rest%%:*}"
+                        local act_session="${rest#*:}"
+                        connect "$act_ws" "$act_session" "--new"
                         ;;
                 esac
             else
@@ -431,13 +466,8 @@ main() {
             exec tmux new-session -A -s "$session" -c "$PWD"
             ;;
         "")
-            # No args: auto-detect from PWD, or show menu
-            local ws
-            if ws=$(detect_workspace_from_pwd); then
-                connect "$ws" "$ws"
-            else
-                interactive_menu
-            fi
+            # No args: always show menu (never auto-connect)
+            interactive_menu
             ;;
         -*)
             # Try legacy flags first
