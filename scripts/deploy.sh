@@ -102,6 +102,15 @@ ln -sf ~/.local/bin/claudes ~/.local/bin/claude-session
 echo "$3" | base64 -d > ~/.bashrc
 echo "$4" | base64 -d | tar -xf - -C ~/
 
+# Clean up any stale tmux socket (left behind by previous kill-server)
+for sock in /tmp/tmux-*/default; do
+    [ -S "$sock" ] || continue
+    # If no tmux server is listening, the socket is stale — remove it
+    if ! tmux list-sessions >/dev/null 2>&1; then
+        rm -f "$sock"
+    fi
+done
+
 # Reload tmux if running
 if tmux source-file ~/.tmux.conf 2>/dev/null; then
     echo "files updated, tmux reloaded"
