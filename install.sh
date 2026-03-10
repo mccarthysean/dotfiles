@@ -81,4 +81,14 @@ for f in "$DOTFILES_DIR"/.bashrc.d/*.sh; do
     echo "  ✓ .bashrc.d/$(basename "$f")"
 done
 
+# ─── Claude Code settings (provided by bind mount from ~/.claude-docker/) ───
+if [ -f ~/.claude/settings.json ]; then
+    hooks=$(grep -c '"hooks"' ~/.claude/settings.json 2>/dev/null || echo "0")
+    if [ "$hooks" -gt 0 ]; then
+        echo "  ✓ Claude Code settings.json (hooks active)"
+    else
+        echo "  ⚠ Claude Code settings.json exists but no hooks found"
+    fi
+fi
+
 echo "Dotfiles installed successfully."

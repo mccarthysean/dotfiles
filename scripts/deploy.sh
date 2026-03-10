@@ -7,7 +7,7 @@
 # What it does:
 #   1. Updates the host-side claudes script at ~/.local/bin/claudes
 #   2. Discovers all running DevPod containers
-#   3. Pushes .tmux.conf, claudes, .bashrc, and .bashrc.d/ to each container
+#   3. Pushes .tmux.conf, claudes, .bashrc, .bashrc.d/, and Claude Code settings.json to each container
 #   4. Reloads tmux config in containers with active sessions
 #
 # Files are base64-encoded for safe transfer through SSH (no escaping issues).
@@ -86,12 +86,16 @@ BASHRC_B64=$(base64 -w0 "$SCRIPT_DIR/.bashrc")
 # Encode all .bashrc.d/ files as a tar archive
 BASHRC_D_B64=$(tar -cf - -C "$SCRIPT_DIR" .bashrc.d/ 2>/dev/null | base64 -w0)
 
+# Claude Code settings.json (hooks, permissions, MCP config)
+# Source from the host's ~/.claude/settings.json (the canonical config)
+SETTINGS_B64=$(base64 -w0 "$HOME/.claude/settings.json")
+
 # ─── Step 4: Deploy to each container in parallel ───
 
 for ws in "${RUNNING[@]}"; do
     (
         ssh -o ConnectTimeout="$SSH_TIMEOUT" -o BatchMode=yes \
-            "${ws}.devpod" bash -s -- "$TMUX_B64" "$CLAUDES_B64" "$BASHRC_B64" "$BASHRC_D_B64" 2>&1 <<'REMOTE'
+            "${ws}.devpod" bash -s -- "$TMUX_B64" "$CLAUDES_B64" "$BASHRC_B64" "$BASHRC_D_B64" "$SETTINGS_B64" 2>&1 <<'REMOTE'
 # Decode and install files
 mkdir -p ~/.local/bin ~/.bashrc.d
 
@@ -101,6 +105,7 @@ chmod +x ~/.local/bin/claudes
 ln -sf ~/.local/bin/claudes ~/.local/bin/claude-session
 echo "$3" | base64 -d > ~/.bashrc
 echo "$4" | base64 -d | tar -xf - -C ~/
+echo "$5" | base64 -d > ~/.claude/settings.json
 
 # Clean up any stale tmux socket (left behind by previous kill-server)
 for sock in /tmp/tmux-*/default; do
