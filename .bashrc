@@ -90,6 +90,17 @@ if ! shopt -oq posix; then
     fi
 fi
 
+# ─── Auto-cd to workspace mount (DevPod containers start SSH in $HOME) ───
+if [ "$PWD" = "$HOME" ] && [ -z "${VSCODE_INJECTION:-}" ]; then
+    for _ws_dir in /workspace /project; do
+        if [ -d "$_ws_dir" ]; then
+            cd "$_ws_dir"
+            break
+        fi
+    done
+    unset _ws_dir
+fi
+
 # ─── Activate Python venv if present ───
 for venv_path in /workspace/.venv /project/.venv; do
     if [ -d "$venv_path" ]; then
