@@ -20,6 +20,31 @@ set -euo pipefail
 
 DEVPOD_WS_DIR="$HOME/.devpod/contexts/default/workspaces"
 SSH_TIMEOUT=10
+RENAME_PROMPT="Look at this terminal session scrollback. Reply with ONLY two lowercase words separated by a hyphen (no punctuation, no explanation) describing the most specific task or feature this session worked on. NEVER reply with generic words like misc, task, work, code, session, or general. Instead, identify the actual subject matter — a feature name, bug target, file type, or domain topic. Examples: fix-logout, soil-pricing, traefik-certs, add-charts, test-mqtt, schema-migration"
+
+# ─── Helpers ───
+
+sanitize_name() {
+    echo "$1" | head -1 | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-'
+}
+
+# Open a tmux session safely (handles nesting when already inside tmux)
+# Usage: tmux_safe_open "session_name" "/working/dir" [--attach-only]
+tmux_safe_open() {
+    local session="$1" dir="$2" attach_only="${3:-}"
+    if [ -n "${TMUX:-}" ]; then
+        if [ "$attach_only" != "--attach-only" ]; then
+            tmux new-session -d -s "$session" -c "$dir" 2>/dev/null || true
+        fi
+        exec tmux switch-client -t "$session"
+    else
+        if [ "$attach_only" = "--attach-only" ]; then
+            exec tmux attach-session -t "$session"
+        else
+            exec tmux new-session -A -s "$session" -c "$dir"
+        fi
+    fi
+}
 
 # ─── Associative arrays for workspace data ───
 
@@ -264,17 +289,19 @@ connect() {
 
 rename_sessions() {
     echo ""
-    echo "  Analyzing sessions..."
+    echo "  Analyzing sessions (in parallel)..."
     echo ""
 
-    local renamed=0
-
-    # Collect all rename-able sessions: type|target|current_name|suggested
-    # type: "local" or "devpod:ws"
-    # target: session name (for local) or "ws:session" (for devpod)
+    local tmpdir
+    tmpdir=$(mktemp -d)
     local -a rename_queue=()
+    local -a pids=()
+    local -a labels=()
+    local -a keys=()
 
-    # Analyze local tmux sessions
+    # Phase 1: Capture scrollback + launch LLM calls in parallel
+
+    # Local sessions
     for s in "${LOCAL_SESSIONS[@]}"; do
         local content
         content=$(tmux capture-pane -t "$s" -p -S -500 2>/dev/null || true)
@@ -282,50 +309,66 @@ rename_sessions() {
             echo "  $s — (empty, skipping)"
             continue
         fi
-
-        echo -n "  $s — analyzing... "
-        local suggested
-        suggested=$(echo "$content" | claude --print --model haiku \
-            "Look at this terminal session scrollback. Reply with ONLY two lowercase words separated by a hyphen (no punctuation, no explanation) describing the most specific task or feature this session worked on. NEVER reply with generic words like misc, task, work, code, session, or general. Instead, identify the actual subject matter — a feature name, bug target, file type, or domain topic. Examples: fix-logout, soil-pricing, traefik-certs, add-charts, test-mqtt, schema-migration" \
-            2>/dev/null || echo "")
-
-        # Sanitize: first word, lowercase, alphanumeric + hyphens only
-        suggested=$(echo "$suggested" | head -1 | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
-        suggested="${suggested:-misc}"
-        echo "$suggested"
-
-        rename_queue+=("local|$s|$suggested")
+        labels+=("$s")
+        keys+=("local|$s")
+        (echo "$content" | claude --print --model haiku "$RENAME_PROMPT" > "$tmpdir/${#keys[@]}" 2>/dev/null || true) &
+        pids+=($!)
     done
 
-    # Analyze DevPod tmux sessions
+    # DevPod sessions — capture scrollback in parallel first
+    local -a devpod_capture_pids=()
+    local -a devpod_entries=()
     for ws in "${WS_LIST[@]}"; do
         local sessions="${WS_SESSIONS[$ws]:-}"
         [ -n "$sessions" ] || continue
         IFS=',' read -ra sess_arr <<< "$sessions"
         for s in "${sess_arr[@]}"; do
-            local content
-            content=$(ssh -o ConnectTimeout="$SSH_TIMEOUT" -o BatchMode=yes \
+            devpod_entries+=("$ws|$s")
+            (ssh -o ConnectTimeout="$SSH_TIMEOUT" -o BatchMode=yes \
                 "${ws}.devpod" \
                 "tmux capture-pane -t '$s' -p -S -500 2>/dev/null || true" \
-                2>/dev/null || true)
-            if [ -z "$content" ]; then
-                echo "  [$ws] $s — (empty, skipping)"
-                continue
-            fi
-
-            echo -n "  [$ws] $s — analyzing... "
-            local suggested
-            suggested=$(echo "$content" | claude --print --model haiku \
-                "Look at this terminal session scrollback. Reply with ONLY two lowercase words separated by a hyphen (no punctuation, no explanation) describing the most specific task or feature this session worked on. NEVER reply with generic words like misc, task, work, code, session, or general. Instead, identify the actual subject matter — a feature name, bug target, file type, or domain topic. Examples: fix-logout, soil-pricing, traefik-certs, add-charts, test-mqtt, schema-migration" \
-                2>/dev/null || echo "")
-
-            suggested=$(echo "$suggested" | head -1 | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
-            suggested="${suggested:-misc}"
-            echo "$suggested"
-
-            rename_queue+=("devpod:$ws|$s|$suggested")
+                > "$tmpdir/devpod-${ws}-${s}" 2>/dev/null || true) &
+            devpod_capture_pids+=($!)
         done
     done
+
+    # Wait for all DevPod captures, then launch their LLM calls
+    for pid in "${devpod_capture_pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+
+    for entry in "${devpod_entries[@]}"; do
+        local ws="${entry%%|*}"
+        local s="${entry#*|}"
+        local capture_file="$tmpdir/devpod-${ws}-${s}"
+        if [ ! -s "$capture_file" ]; then
+            echo "  [$ws] $s — (empty, skipping)"
+            continue
+        fi
+        labels+=("[$ws] $s")
+        keys+=("devpod:$ws|$s")
+        (claude --print --model haiku "$RENAME_PROMPT" < "$capture_file" > "$tmpdir/${#keys[@]}" 2>/dev/null || true) &
+        pids+=($!)
+    done
+
+    # Wait for all LLM calls
+    for pid in "${pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+
+    # Collect results
+    for i in "${!keys[@]}"; do
+        local idx=$((i + 1))
+        local raw=""
+        [ -f "$tmpdir/$idx" ] && raw=$(cat "$tmpdir/$idx")
+        local suggested
+        suggested=$(sanitize_name "$raw")
+        suggested="${suggested:-unknown}"
+        echo "  ${labels[$i]} — $suggested"
+        rename_queue+=("${keys[$i]}|$suggested")
+    done
+
+    rm -rf "$tmpdir"
 
     if [ ${#rename_queue[@]} -eq 0 ]; then
         echo ""
@@ -336,10 +379,13 @@ rename_sessions() {
         exec "$0"
     fi
 
+    # Phase 2: Interactive confirmation
     echo ""
     echo "  ─────────────────────────────────────────"
     echo "  Confirm renames (Enter = accept, or type a new name, s = skip):"
     echo ""
+
+    local renamed=0
 
     for entry in "${rename_queue[@]}"; do
         local entry_type="${entry%%|*}"
@@ -362,8 +408,7 @@ rename_sessions() {
         fi
 
         local final_name="${user_input:-$suggested}"
-        # Sanitize user input too
-        final_name=$(echo "$final_name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+        final_name=$(sanitize_name "$final_name")
         final_name="${final_name:-$suggested}"
 
         if [ "$final_name" = "$current" ]; then
@@ -372,35 +417,35 @@ rename_sessions() {
         fi
 
         if [ "$entry_type" = "local" ]; then
-            # Avoid local collisions
             local try_name="$final_name"
             local suffix=2
             while tmux has-session -t "$try_name" 2>/dev/null && [ "$try_name" != "$current" ]; do
                 try_name="${final_name}-${suffix}"
                 suffix=$((suffix + 1))
             done
-            tmux rename-session -t "$current" "$try_name" 2>/dev/null \
-                && echo "    ✓ renamed to $try_name" \
-                || echo "    ✗ failed"
-            renamed=$((renamed + 1))
+            if tmux rename-session -t "$current" "$try_name" 2>/dev/null; then
+                echo "    ✓ renamed to $try_name"
+                renamed=$((renamed + 1))
+            else
+                echo "    ✗ failed"
+            fi
         else
             local ws="${entry_type#devpod:}"
             local try_name="${ws}-${final_name}"
             local suffix=2
-            local existing_sessions
-            existing_sessions=$(ssh -o ConnectTimeout="$SSH_TIMEOUT" -o BatchMode=yes \
-                "${ws}.devpod" "tmux list-sessions -F '#{session_name}' 2>/dev/null || true" \
-                2>/dev/null || true)
-            while echo "$existing_sessions" | grep -qx "$try_name" && [ "$try_name" != "$current" ]; do
+            # Reuse cached session list for collision detection
+            local existing="${WS_SESSIONS[$ws]:-}"
+            while echo ",$existing," | grep -q ",${try_name}," && [ "$try_name" != "$current" ]; do
                 try_name="${ws}-${final_name}-${suffix}"
                 suffix=$((suffix + 1))
             done
-            ssh -o ConnectTimeout="$SSH_TIMEOUT" -o BatchMode=yes \
-                "${ws}.devpod" "tmux rename-session -t '$current' '$try_name'" \
-                2>/dev/null \
-                && echo "    ✓ renamed to $try_name" \
-                || echo "    ✗ failed"
-            renamed=$((renamed + 1))
+            if ssh -o ConnectTimeout="$SSH_TIMEOUT" -o BatchMode=yes \
+                "${ws}.devpod" "tmux rename-session -t '$current' '$try_name'" 2>/dev/null; then
+                echo "    ✓ renamed to $try_name"
+                renamed=$((renamed + 1))
+            else
+                echo "    ✗ failed"
+            fi
         fi
     done
 
@@ -413,7 +458,6 @@ rename_sessions() {
     echo ""
     echo "  Press Enter to return to menu..."
     read -r
-    # Re-run to show updated menu
     exec "$0"
 }
 
@@ -542,13 +586,7 @@ interactive_menu() {
             default_name=$(basename "$PWD")
             read -r -p "  Session name [$default_name]: " session_name
             session_name="${session_name:-$default_name}"
-            if [ -n "${TMUX:-}" ]; then
-                # Already inside tmux — create detached then switch
-                tmux new-session -d -s "$session_name" -c "$PWD"
-                exec tmux switch-client -t "$session_name"
-            else
-                exec tmux new-session -s "$session_name" -c "$PWD"
-            fi
+            tmux_safe_open "$session_name" "$PWD"
             ;;
         [0-9]*)
             local chosen=$((choice - 1))
@@ -559,11 +597,7 @@ interactive_menu() {
 
                 case "$act_type" in
                     local)
-                        if [ -n "${TMUX:-}" ]; then
-                            exec tmux switch-client -t "$rest"
-                        else
-                            exec tmux attach-session -t "$rest"
-                        fi
+                        tmux_safe_open "$rest" "$PWD" --attach-only
                         ;;
                     start)
                         connect "$rest" "$rest" "--new"
@@ -634,12 +668,7 @@ main() {
             # Local tmux session in current directory (no DevPod/SSH)
             # Auto-name from directory basename if no name given
             local session="${2:-$(basename "$PWD")}"
-            if [ -n "${TMUX:-}" ]; then
-                tmux new-session -d -s "$session" -c "$PWD" 2>/dev/null || true
-                exec tmux switch-client -t "$session"
-            else
-                exec tmux new-session -A -s "$session" -c "$PWD"
-            fi
+            tmux_safe_open "$session" "$PWD"
             ;;
         "")
             # No args: always show menu (never auto-connect)
