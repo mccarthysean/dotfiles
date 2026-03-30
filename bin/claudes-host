@@ -286,7 +286,7 @@ rename_sessions() {
         echo -n "  $s — analyzing... "
         local suggested
         suggested=$(echo "$content" | claude --print --model haiku \
-            "Look at this terminal session scrollback. Reply with ONLY two lowercase words separated by a hyphen (no punctuation, no explanation) that describe what this session is working on. If it's a Claude Code session, focus on the task being done. If unclear, reply 'misc-task'. Example format: bug-auth, add-charts, fix-deploy, soil-engine" \
+            "Look at this terminal session scrollback. Reply with ONLY two lowercase words separated by a hyphen (no punctuation, no explanation) describing the most specific task or feature this session worked on. NEVER reply with generic words like misc, task, work, code, session, or general. Instead, identify the actual subject matter — a feature name, bug target, file type, or domain topic. Examples: fix-logout, soil-pricing, traefik-certs, add-charts, test-mqtt, schema-migration" \
             2>/dev/null || echo "")
 
         # Sanitize: first word, lowercase, alphanumeric + hyphens only
@@ -316,7 +316,7 @@ rename_sessions() {
             echo -n "  [$ws] $s — analyzing... "
             local suggested
             suggested=$(echo "$content" | claude --print --model haiku \
-                "Look at this terminal session scrollback. Reply with ONLY two lowercase words separated by a hyphen (no punctuation, no explanation) that describe what this session is working on. If it's a Claude Code session, focus on the task being done. If unclear, reply 'misc-task'. Example format: bug-auth, add-charts, fix-deploy, soil-engine" \
+                "Look at this terminal session scrollback. Reply with ONLY two lowercase words separated by a hyphen (no punctuation, no explanation) describing the most specific task or feature this session worked on. NEVER reply with generic words like misc, task, work, code, session, or general. Instead, identify the actual subject matter — a feature name, bug target, file type, or domain topic. Examples: fix-logout, soil-pricing, traefik-certs, add-charts, test-mqtt, schema-migration" \
                 2>/dev/null || echo "")
 
             suggested=$(echo "$suggested" | head -1 | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
