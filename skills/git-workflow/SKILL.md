@@ -130,8 +130,8 @@ git branch --show-current
 # 2. Push your work
 git push
 
-# 3. Create PR (draft is recommended while still validating)
-gh pr create --draft --base main --fill
+# 3. Create PR (non-draft so GitHub Copilot auto-reviews it)
+gh pr create --base main --fill
 
 # 4. View the PR in browser to verify Copilot review starts
 gh pr view --web
