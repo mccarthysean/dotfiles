@@ -1,6 +1,6 @@
 #!/bin/bash
 # DevPod dotfiles installer — runs inside each new container
-# Installs tmux, Claude Code, claudes (session manager), and bash snippets
+# Installs tmux, Claude Code, Codex, agents (session manager), and bash snippets
 # Assumes Debian/Ubuntu-based containers (apt-get)
 
 set -euo pipefail
@@ -52,19 +52,33 @@ if ! command -v claude &>/dev/null; then
     echo "  ✓ Claude Code installed"
 fi
 
+# ─── Install Codex if missing ───
+if ! command -v codex &>/dev/null; then
+    echo "  Installing Codex..."
+    if command -v bun &>/dev/null; then
+        bun install -g @openai/codex >/dev/null 2>&1
+    elif command -v npm &>/dev/null; then
+        npm install -g @openai/codex >/dev/null 2>&1
+    else
+        echo "  Error: neither bun nor npm found. Cannot install Codex."
+        exit 1
+    fi
+    echo "  ✓ Codex installed"
+fi
+
 # ─── tmux config (container version — OSC 52 clipboard, no win32yank) ───
 if [ -f "$DOTFILES_DIR/.tmux.conf" ]; then
     cp "$DOTFILES_DIR/.tmux.conf" ~/
     echo "  ✓ .tmux.conf"
 fi
 
-# ─── claudes script ───
+# ─── agents script ───
 mkdir -p ~/.local/bin
-if [ -f "$DOTFILES_DIR/bin/claudes" ]; then
-    cp "$DOTFILES_DIR/bin/claudes" ~/.local/bin/
-    chmod +x ~/.local/bin/claudes
-    ln -sf ~/.local/bin/claudes ~/.local/bin/claude-session  # compat
-    echo "  ✓ claudes"
+if [ -f "$DOTFILES_DIR/bin/agents" ]; then
+    cp "$DOTFILES_DIR/bin/agents" ~/.local/bin/
+    chmod +x ~/.local/bin/agents
+    rm -f ~/.local/bin/claudes ~/.local/bin/claude-session
+    echo "  ✓ agents"
 fi
 
 # ─── .bashrc ───

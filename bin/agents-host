@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# claudes — Smart DevPod + tmux session manager for Claude Code
+# agents — Smart DevPod + tmux session manager for AI agents
 #
 # Usage:
-#   claudes                  # Auto-detect workspace from PWD, or show menu
-#   claudes WORKSPACE        # Connect to workspace's default tmux session
-#   claudes WORKSPACE LABEL  # Connect/create WORKSPACE-LABEL tmux session
-#   claudes --local [NAME]   # Local tmux session in current dir (no DevPod)
-#   claudes --list           # Show all workspaces + sessions
-#   claudes --help           # Show this help
+#   agents                   # Auto-detect workspace from PWD, or show menu
+#   agents WORKSPACE         # Connect to workspace's default tmux session
+#   agents WORKSPACE LABEL   # Connect/create WORKSPACE-LABEL tmux session
+#   agents --local [NAME]    # Local tmux session in current dir (no DevPod)
+#   agents --no-tmux WORKSPACE [LABEL]  # Direct shell, no tmux persistence
+#   agents --list            # Show all workspaces + sessions
+#   agents --help            # Show this help
 #
-# From WSL in ~/git_wsl/rcom:  claudes → auto-detects rcom → SSH → tmux + Claude
-# From phone via Termius:       claudes → interactive menu of sessions + workspaces
-#
-# Backwards compatible: claude-session symlink still works.
+# From WSL in ~/git_wsl/rcom:  agents → auto-detects rcom → SSH → tmux + agent
+# From phone via Termius:       agents → interactive menu of sessions + workspaces
 
 set -euo pipefail
 
@@ -249,11 +248,12 @@ connect() {
     local ws="$1"
     local session="${2:-$ws}"
     local mode="${3:---attach}"  # --attach (default) or --new
+    local use_tmux="${4:-1}"
 
     # Verify workspace exists
     if [ -z "${WS_UID[$ws]:-}" ]; then
         echo "  Error: unknown workspace '$ws'"
-        echo "  Run 'claudes --list' to see available workspaces."
+        echo "  Run 'agents --list' to see available workspaces."
         exit 1
     fi
 
@@ -279,9 +279,9 @@ connect() {
     echo "  Connecting to $ws (session: $session)..."
     # Pass token via env var — works in tmux, Docker, SSH without browser auth
     if [ -n "$token" ]; then
-        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH CLAUDE_CODE_OAUTH_TOKEN=$token; claudes $mode ${session}"
+        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH CLAUDE_CODE_OAUTH_TOKEN=$token AGENTS_USE_TMUX=$use_tmux; agents $mode ${session}"
     else
-        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH; claudes $mode ${session}"
+        exec ssh -t "${ws}.devpod" "export PATH=\$HOME/.local/bin:\$PATH AGENTS_USE_TMUX=$use_tmux; agents $mode ${session}"
     fi
 }
 
@@ -465,7 +465,7 @@ rename_sessions() {
 
 interactive_menu() {
     echo ""
-    echo "  claudes"
+    echo "  agents"
     echo "  ═══════"
     echo ""
 
@@ -625,16 +625,16 @@ interactive_menu() {
     esac
 }
 
-# ─── Legacy flag compat (claude-session -c WORKSPACE) ───
+# ─── Legacy flag compat ───
 
 handle_legacy_flags() {
     case "${1:-}" in
         -c|--container)
-            # claude-session -c WORKSPACE → claudes WORKSPACE
+            # agents -c WORKSPACE → agents WORKSPACE
             if [ -n "${2:-}" ]; then
                 connect "$2" "$2"
             else
-                echo "Usage: claudes WORKSPACE"
+                echo "Usage: agents WORKSPACE"
                 show_list
                 exit 1
             fi
@@ -670,6 +670,31 @@ main() {
             local session="${2:-$(basename "$PWD")}"
             tmux_safe_open "$session" "$PWD"
             ;;
+        --no-tmux)
+            if [ -z "${2:-}" ]; then
+                local detected
+                if detected=$(detect_workspace_from_pwd); then
+                    connect "$detected" "$detected" "--new" "0"
+                else
+                    echo "Usage: agents --no-tmux WORKSPACE [LABEL]"
+                    show_list
+                    exit 1
+                fi
+            else
+                local ws="$2"
+                local label="${3:-}"
+                if [ -z "${WS_UID[$ws]:-}" ]; then
+                    echo "  Error: unknown workspace '$ws'"
+                    echo "  Run 'agents --list' to see available workspaces."
+                    exit 1
+                fi
+                if [ -n "$label" ]; then
+                    connect "$ws" "${ws}-${label}" "--new" "0"
+                else
+                    connect "$ws" "$ws" "--new" "0"
+                fi
+            fi
+            ;;
         "")
             # No args: always show menu (never auto-connect)
             interactive_menu
@@ -687,7 +712,7 @@ main() {
             local label="${2:-}"
 
             # If arg isn't a known workspace, try auto-detect from PWD
-            # e.g. "claudes frontend" in ~/git_wsl/rcom → rcom-frontend
+            # e.g. "agents frontend" in ~/git_wsl/rcom → rcom-frontend
             if [ -z "${WS_UID[$ws]:-}" ]; then
                 local detected
                 if detected=$(detect_workspace_from_pwd); then
@@ -695,7 +720,7 @@ main() {
                     connect "$detected" "${detected}-${ws}"
                 else
                     echo "  Error: unknown workspace '$ws'"
-                    echo "  Run 'claudes --list' to see available workspaces."
+                    echo "  Run 'agents --list' to see available workspaces."
                     exit 1
                 fi
             elif [ -n "$label" ]; then

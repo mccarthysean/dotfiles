@@ -1,19 +1,17 @@
-# Claude Code + dev server helpers for DevPod containers
+# Claude Code, Codex, and dev server helpers for DevPod containers
 
 # Ensure local bin is in PATH
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 
 # ntfy notification endpoint — shared ntfy-claude container on traefik-public Docker network
 # Used by Claude Code hooks (ntfy-permission.sh, ntfy-idle.sh) for phone notifications
 export NTFY_URL="${NTFY_URL:-http://ntfy-claude:80}"
 
-# Auto-launch claudes on interactive login (not already in tmux, not in VS Code)
+# Auto-launch agents on interactive login (not already in tmux, not in VS Code)
 # DevPod SSH tunnels don't set $SSH_CONNECTION, so we check for interactive shell instead
 if [ -z "$TMUX" ] && [ -z "$VSCODE_INJECTION" ] && [[ $- == *i* ]]; then
-    if command -v claudes &>/dev/null; then
-        claudes
-    elif command -v claude-session &>/dev/null; then
-        claude-session
+    if command -v agents &>/dev/null; then
+        agents
     fi
 fi
 

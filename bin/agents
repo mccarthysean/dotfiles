@@ -1,19 +1,31 @@
 #!/usr/bin/env bash
-# claudes — Manage persistent Claude Code tmux sessions (container-side)
+# agents — Manage persistent AI agent tmux sessions (container-side)
 #
 # Usage:
-#   claudes              # Interactive menu: list sessions or create new
-#   claudes <name>       # Attach/create session in current directory
-#   claudes --list       # List all Claude sessions
-#   claudes --help       # Show this help
+#   agents               # Interactive menu: list sessions or create new
+#   agents <name>        # Attach/create session in current directory
+#   AGENTS_USE_TMUX=0 agents  # Start a direct shell in the workspace
+#   agents --list        # List all agent sessions
+#   agents --help        # Show this help
 #
 # New sessions auto-detect the workspace dir from devcontainer.json.
 #
 # Examples:
-#   cd /project && claudes rcom     # session in project dir
-#   claudes                         # Shows menu
+#   cd /project && agents rcom      # session in project dir
+#   agents                          # Shows menu
 
 set -euo pipefail
+
+use_tmux() {
+    [ "${AGENTS_USE_TMUX:-1}" != "0" ]
+}
+
+direct_shell() {
+    local workdir="$1"
+    echo "Starting direct shell: $workdir"
+    cd "$workdir"
+    exec "${SHELL:-/bin/bash}" -l
+}
 
 # ─── Ensure Claude Code is authenticated before entering tmux ───
 # Pasting auth codes inside tmux (especially via SSH/Termius) is unreliable.
@@ -142,6 +154,10 @@ attach_or_create() {
     validate_session_name "$session"
     set_terminal_title "$session"
 
+    if ! use_tmux; then
+        direct_shell "$workdir"
+    fi
+
     if [ -n "${TMUX:-}" ]; then
         if tmux has-session -t "$session" 2>/dev/null; then
             exec tmux switch-client -t "$session"
@@ -163,7 +179,7 @@ interactive_menu() {
     local suggested="${1:-}"
 
     echo ""
-    echo "  Claude Code Sessions"
+    echo "  Agent Sessions"
     echo "  ════════════════════"
     echo ""
 
@@ -274,21 +290,31 @@ case "${1:-}" in
         exit 0
         ;;
     --attach)
-        # Direct attach — called by host-side claudes to skip container menu
-        ensure_authenticated
+        # Direct attach — called by host-side agents to skip container menu
+        if use_tmux; then
+            ensure_authenticated
+        fi
         attach_or_create "${2:?'--attach requires session name'}"
         ;;
     --new)
-        # Direct create — called by host-side claudes to skip container menu
-        ensure_authenticated
+        # Direct create — called by host-side agents to skip container menu
+        if use_tmux; then
+            ensure_authenticated
+        fi
         attach_or_create "${2:?'--new requires session name'}"
         ;;
     *)
         # Authenticate before entering tmux (paste works better outside tmux)
-        ensure_authenticated
+        if use_tmux; then
+            ensure_authenticated
+        fi
 
         if [ -z "${1:-}" ]; then
-            interactive_menu
+            if use_tmux; then
+                interactive_menu
+            else
+                direct_shell "$(detect_workdir)"
+            fi
         else
             # If sessions already exist, show menu so user can choose
             existing=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)

@@ -74,7 +74,7 @@ alias pip=pip3
 
 # ─── Environment ───
 export EDITOR=nano
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 
 # ─── Bash aliases file ───
 if [ -f ~/.bash_aliases ]; then
